@@ -352,7 +352,8 @@
                 <p class="registration-subtitle">Register your profile @ EduWork</p>
             </div>
 
-            <form id="registrationForm" action="student_register.php" method="POST">
+            <form id="registrationForm" action="" method="POST">
+                {% csrf_token %}
 
                 <!-- First Name and Last Name -->
                 <div class="form-row">
@@ -401,6 +402,8 @@
                         type="date"
                         required
                         class="form-input no-icon"
+                        pattern="\d{4}-\d{2}-\d{2}"
+                        placeholder="YYYY-MM-DD"
                     />
                 </div>
 
@@ -548,7 +551,6 @@
                         </div>
                     </div>
                 </div>
-
                 <!-- Password and Confirm Password -->
                 <div class="form-row">
                     <div class="form-group">
@@ -592,6 +594,7 @@
                     </div>
                 </div>
 
+
                 <!-- Register Button -->
                 <button type="submit" class="register-button">
                     Register
@@ -602,7 +605,7 @@
             <div class="login-link-section">
                 <p class="text-sm text-gray-600">
                     Already have an account?
-                    <a href="login.html" class="login-link">Sign in here</a>
+                    <a href="{% url 'login' %}" class="login-link">Sign in here</a>
                 </p>
             </div>
         </div>
@@ -613,7 +616,7 @@
         </div>
     </div>
 
-    <script>
+    {% comment %} <script>
         document.getElementById('registrationForm').addEventListener('submit', function(e) {
             e.preventDefault();
 
@@ -660,6 +663,6 @@
                 e.target.setCustomValidity('');
             }
         });
-    </script>
+    </script> {% endcomment %}
 </body>
 </html>
