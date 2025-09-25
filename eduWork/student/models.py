@@ -1,5 +1,5 @@
 from django.db import models
-
+# from employer.models import Contract
 # Create your models here.
 class Student(models.Model):
     student_id = models.AutoField(primary_key=True)
@@ -46,17 +46,17 @@ class Jobs(models.Model):
     class Meta:
         db_table = 'job_post'
 
-class Contract(models.Model):
-    contract_id = models.AutoField(primary_key=True)
-    post_id = models.CharField(max_length=45)
+class JobHistory(models.Model):
+    log_id = models.AutoField(primary_key=True)
+    contract_id = models.CharField(max_length=45)
     student_id = models.CharField(max_length=45)
     employer_id = models.CharField(max_length=45)
-    status = models.CharField(max_length=45)
+    join_date = models.DateField()
+    leaving_date = models.DateField()
+    total_salary = models.CharField(max_length=6)
 
-    salary = models.CharField(max_length=5)
-    
     class Meta:
-        db_table = 'contract'
+        db_table = 'job_history'
 
 
     

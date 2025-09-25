@@ -405,12 +405,12 @@
                             <div class="applicant-item">
                                 <div class="applicant-name">{{ applicant.student_name }}</div>
                                 <div class="applicant-actions">
-                                    <form method="get" action="#" style="display: inline;">
+                                    <form method="get" action="{% url 'view_history' %}" style="display: inline;">
                                         <input type="hidden" name="student_id" value="{{ applicant.student_id }}">
                                         <button class="history-btn" type="submit">History</button>
                                     </form>
                                     
-                                    <form method="post" action="#" style="display: inline;">
+                                    <form method="post" action="{% url 'accept_application' %}" style="display: inline;">
                                         {% csrf_token %}
                                         <input type="hidden" name="application_id" value="{{ applicant.application_id }}">
                                         <button class="accept-btn {% if applicant.is_accepted %}accepted{% endif %}" 

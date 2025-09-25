@@ -1,19 +1,7 @@
-
-from pyexpat.errors import messages
 from django.db import connection
 from django.shortcuts import get_object_or_404, redirect, render
-from student.models import Jobs
-
-from .models import Employer
-from django.shortcuts import render, redirect
 from django.contrib import messages
-
-
-from django.shortcuts import render, redirect
-from django.db import connection
-
-from django.shortcuts import render, redirect
-from django.db import connection
+from .models import Employer, Contract
 from datetime import date
 from datetime import datetime
 
@@ -61,6 +49,7 @@ def employer_registration(request):
         return redirect("employer_registration")
 
     return render(request, "employer/employer_registration.html")
+
 def employer_profile(request):
     if "username" not in request.session:
         return redirect("login")
@@ -133,12 +122,8 @@ def employer_announcement(request):
                     [title, description, current_date, current_time]
                 )
         return redirect("employer_announcement")
-        # return render(request, "employer/employer_announcement.html", {
-        #     "message": "Announcement posted successfully!"
-        # })
+
     return render(request, "employer/employer_announcement.html")
-
-
 
 def post_job(request):
     if "username" not in request.session:
@@ -221,13 +206,20 @@ def view_applications(request):
                     student_data = cursor.fetchone()
                     
                     if student_data:
+                        # Check if this application is already accepted
+                        cursor.execute("""
+                            SELECT status FROM contract 
+                            WHERE post_id = %s AND student_id = %s
+                        """, [job[0], email])
+                        contract_status = cursor.fetchone()
+                        
                         applicant = {
                             'student_id': student_data[0],
                             'student_name': f"{student_data[1]} {student_data[2]}",
                             'student_email': student_data[3],
                             'student_phone': student_data[4],
-                            'application_id': f"{job[0]}_{student_data[0]}",  # composite ID
-                            'is_accepted': False  # You can implement acceptance logic later
+                            'application_id': f"{job[0]}_{email}",  # composite ID with email
+                            'is_accepted': contract_status and contract_status[0] == 'active'
                         }
                         job_dict['applicants'].append(applicant)
             
@@ -235,15 +227,309 @@ def view_applications(request):
     
     return render(request, "employer/view_applications.html", {"job_posts": job_posts})
 
-def delete_job_post(request, job_post_id):   # <-- match the URLconf
-    job = get_object_or_404(Jobs, job_post_id=job_post_id)  # use correct field name
-
-    if request.method == "POST":
-        job.delete()
-        messages.success(request, "Job post deleted successfully.")
-        return redirect("view_applications")
+def delete_job_post(request, job_post_id):
+    if "username" not in request.session:
+        return redirect("login")
+    
+    # Use raw SQL since you don't have JobPost model imported
+    with connection.cursor() as cursor:
+        if request.method == "POST":
+            cursor.execute("DELETE FROM job_post WHERE job_post_id = %s", [job_post_id])
+            messages.success(request, "Job post deleted successfully.")
+            return redirect("view_applications")
 
     messages.error(request, "Invalid request.")
     return redirect("view_applications")
 
+def accept_application(request):
+    if "username" not in request.session:
+        return redirect("login")
+    
+    if request.method == "POST":
+        application_id = request.POST.get("application_id")
+        
+        # Parse the application_id to get job_id and student_email
+        try:
+            job_id, student_email = application_id.split("_", 1)
+            job_id = int(job_id)
+        except ValueError:
+            messages.error(request, "Invalid application ID.")
+            return redirect("view_applications")
+        
+        with connection.cursor() as cursor:
+            # Get job details (salary + shop_name)
+            cursor.execute("""
+                SELECT salary, shop_name 
+                FROM job_post 
+                WHERE job_post_id = %s
+            """, [job_id])
+            job_data = cursor.fetchone()
+            
+            if not job_data:
+                messages.error(request, "Job not found.")
+                return redirect("view_applications")
+            
+            salary, shop_name = job_data
+            employer_email = request.session.get("username")
+            
+            # Get student name
+            cursor.execute("""
+                SELECT f_name, l_name
+                FROM student 
+                WHERE email_id = %s
+            """, [student_email])
+            student_data = cursor.fetchone()
+            
+            if not student_data:
+                messages.error(request, "Student not found.")
+                return redirect("view_applications")
+            
+            student_name = f"{student_data[0]} {student_data[1]}"
+            
+            # Check if contract already exists
+            cursor.execute("""
+                SELECT contract_id 
+                FROM contract 
+                WHERE post_id = %s AND student_id = %s
+            """, [job_id, student_email])
+            existing_contract = cursor.fetchone()
+            
+            if existing_contract:
+                messages.info(request, "Application already processed.")
+                return redirect("view_applications")
+            
+            # Insert new contract with student_name and shop_name
+            cursor.execute("""
+                INSERT INTO contract 
+                (post_id, student_id, employer_id, status, salary, student_name, shop_name)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, [job_id, student_email, employer_email, "active", salary, student_name, shop_name])
+            
+            messages.success(request, f"Application accepted successfully!")
+    
+    return redirect("view_applications")
 
+def view_contract(request):
+    if "username" not in request.session:
+        return redirect("login")
+    
+    employer_email = request.session.get("username")
+    
+    with connection.cursor() as cursor:
+        # Get all contracts for this employer along with job details for start/end dates
+        cursor.execute("""
+            SELECT c.contract_id, c.post_id, c.student_id, c.status, c.salary, 
+                   c.student_name, c.shop_name, jp.start_date, jp.end_date
+            FROM contract c
+            LEFT JOIN job_post jp ON c.post_id = jp.job_post_id
+            WHERE c.employer_id = %s AND c.status = 'active'
+            ORDER BY c.contract_id DESC
+        """, [employer_email])
+        
+        contracts_data = cursor.fetchall()
+        
+        contracts = []
+        for contract in contracts_data:
+            contract_dict = {
+                'contract_id': contract[0],
+                'post_id': contract[1],
+                'student_id': contract[2],
+                'status': contract[3],
+                'salary': contract[4],
+                'student_name': contract[5] or 'Unknown Student',
+                'shop_name': contract[6] or 'Unknown Shop',
+                'start_date': contract[7] or 'N/A',
+                'end_date': contract[8] or 'N/A'
+            }
+            contracts.append(contract_dict)
+    
+    return render(request, "employer/view_contract.html", {"contracts": contracts})
+
+def terminate_contract(request, contract_id):
+    if "username" not in request.session:
+        return redirect("login")
+    
+    employer_email = request.session.get("username")
+    
+    if request.method == "POST":
+        with connection.cursor() as cursor:
+            # Verify this contract belongs to the logged-in employer and get contract details
+            cursor.execute("""
+                SELECT c.contract_id, c.student_id, c.employer_id, c.post_id, c.salary,
+                       jp.start_date, jp.salary as job_salary
+                FROM contract c
+                JOIN job_post jp ON c.post_id = jp.job_post_id
+                WHERE c.contract_id = %s AND c.employer_id = %s
+            """, [contract_id, employer_email])
+            
+            contract_data = cursor.fetchone()
+            
+            if contract_data:
+                # Extract contract details
+                contract_id = contract_data[0]
+                student_id = contract_data[1]  # student email
+                employer_id = contract_data[2]  # employer email
+                post_id = contract_data[3]
+                contract_salary = contract_data[4]
+                join_date = contract_data[5]  # start_date from job_post
+                job_salary = contract_data[6]
+                
+                # Get current date for leaving date
+                from datetime import date
+                current_date = date.today()
+                
+                # Calculate working days (including both start and end dates)
+                working_days = (current_date - join_date).days + 1
+                
+                # Ensure working days is at least 1 (in case of same day termination)
+                if working_days < 1:
+                    working_days = 1
+                
+                # Use contract salary if available, otherwise use job salary
+                daily_salary = int(contract_salary) if contract_salary else int(job_salary)
+                
+                # Calculate total salary
+                total_salary = working_days * daily_salary
+                
+                # Insert into job_history table
+                cursor.execute("""
+                    INSERT INTO job_history (contract_id, student_id, employer_id, 
+                                           join_date, leaving_date, total_salary)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, [
+                    contract_id,
+                    student_id,     # student email
+                    employer_id,    # employer email  
+                    join_date,      # start_date from job_post
+                    current_date,   # current date when terminate button is pressed
+                    str(total_salary)  # calculated total salary
+                ])
+                
+                # Increment vacancy in job_post (make position available again)
+                cursor.execute("""
+                    UPDATE job_post 
+                    SET vacancy = vacancy + 1 
+                    WHERE job_post_id = %s
+                """, [post_id])
+                
+                # Delete the contract (as per original logic)
+                cursor.execute("DELETE FROM contract WHERE contract_id = %s", [contract_id])
+                
+                messages.success(request, 
+                    f"Contract terminated successfully. "
+                    f"Job history recorded: {working_days} working days, "
+                    f"Total salary: ₹{total_salary}")
+            else:
+                messages.error(request, "Contract not found or you don't have permission to terminate it.")
+    
+    return redirect("view_contract")
+
+def view_history(request):
+    """
+    View to display job history of a specific student for the employer
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    student_id = request.GET.get('student_id')
+    
+    if not student_id:
+        messages.error(request, "Student ID is required to view history.")
+        return redirect("view_applications")
+    
+    try:
+        with connection.cursor() as cursor:
+            # Get student information
+            cursor.execute("""
+                SELECT student_id, f_name, l_name, email_id, phone_no, skill, age
+                FROM student 
+                WHERE student_id = %s
+            """, [student_id])
+            student_data = cursor.fetchone()
+            
+            if not student_data:
+                messages.error(request, "Student not found.")
+                return redirect("view_applications")
+            
+            student_info = {
+                'student_id': student_data[0],
+                'name': f"{student_data[1]} {student_data[2]}",
+                'email': student_data[3],
+                'phone': student_data[4],
+                'skills': student_data[5],
+                'age': student_data[6]
+            }
+            
+            # Get job history for this student with job details
+            cursor.execute("""
+                SELECT jh.log_id, jh.contract_id, jh.student_id, jh.employer_id,
+                       jh.join_date, jh.leaving_date, jh.total_salary,
+                       jp.post_title, jp.shop_name, e.shop_name as employer_shop_name,
+                       e.o_name as employer_owner_name
+                FROM job_history jh
+                LEFT JOIN contract c ON jh.contract_id = c.contract_id
+                LEFT JOIN job_post jp ON c.post_id = jp.job_post_id
+                LEFT JOIN employer e ON jh.employer_id = e.email_id
+                WHERE jh.student_id = %s
+                ORDER BY jh.leaving_date DESC, jh.join_date DESC
+            """, [student_info['email']])
+            
+            history_data = cursor.fetchall()
+            
+            # Convert to list of dictionaries for easier template usage
+            job_history = []
+            total_jobs = len(history_data)
+            total_experience_days = 0
+            total_earnings = 0
+            
+            for row in history_data:
+                # Calculate working days
+                join_date = row[4]
+                leaving_date = row[5]
+                if join_date and leaving_date:
+                    working_days = (leaving_date - join_date).days + 1
+                    total_experience_days += working_days
+                else:
+                    working_days = 0
+                
+                # Add to total earnings
+                try:
+                    salary = int(row[6]) if row[6] else 0
+                    total_earnings += salary
+                except (ValueError, TypeError):
+                    salary = 0
+                
+                history_dict = {
+                    'log_id': row[0],
+                    'contract_id': row[1],
+                    'student_id': row[2],
+                    'employer_id': row[3],
+                    'join_date': row[4],
+                    'leaving_date': row[5],
+                    'total_salary': row[6],
+                    'job_title': row[7] if row[7] else 'N/A',
+                    'shop_name': row[8] if row[8] else (row[9] if row[9] else 'N/A'),
+                    'employer_name': row[10] if row[10] else 'N/A',
+                    'working_days': working_days,
+                    'daily_rate': salary // working_days if working_days > 0 else 0
+                }
+                job_history.append(history_dict)
+            
+            # Calculate summary statistics
+            experience_summary = {
+                'total_jobs': total_jobs,
+                'total_experience_days': total_experience_days,
+                'total_earnings': total_earnings,
+                'average_job_duration': total_experience_days // total_jobs if total_jobs > 0 else 0,
+                'average_daily_rate': total_earnings // total_experience_days if total_experience_days > 0 else 0
+            }
+        
+        return render(request, "employer/view_history.html", {
+            "student_info": student_info,
+            "job_history": job_history,
+            "experience_summary": experience_summary
+        })
+        
+    except Exception as e:
+        messages.error(request, f"Error loading student history: {str(e)}")
+        return redirect("view_applications")
