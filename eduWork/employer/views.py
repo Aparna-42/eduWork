@@ -4,6 +4,7 @@ from django.contrib import messages
 from .models import Employer, Contract
 from datetime import date
 from datetime import datetime
+from collections import defaultdict  # Add this import
 
 def employer_registration(request):
     if request.method == 'POST':
@@ -88,9 +89,7 @@ def emp_login_view(request):
                     request.session['phone_no'] = employer_details[3]
                     request.session['map_loc'] = employer_details[4]
             
-            return render(request, "employer/employer_home.html", {
-                "message": "Login successful!"
-            })
+            return redirect("employer_home")  # Changed from render to redirect
         else:
             return render(request, "employer/login.html", {
                 "error": "Invalid credentials!"
@@ -533,3 +532,159 @@ def view_history(request):
     except Exception as e:
         messages.error(request, f"Error loading student history: {str(e)}")
         return redirect("view_applications")
+    
+def view_log(request):
+    """
+    View to display work log - all job history records for the employer
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    employer_email = request.session.get("username")
+    
+    try:
+        with connection.cursor() as cursor:
+            # Get all job history records for this employer with student names
+            cursor.execute("""
+                SELECT jh.log_id, jh.contract_id, jh.student_id, jh.employer_id,
+                       jh.join_date, jh.leaving_date, jh.total_salary,
+                       s.f_name, s.l_name
+                FROM job_history jh
+                LEFT JOIN student s ON jh.student_id = s.email_id
+                WHERE jh.employer_id = %s
+                ORDER BY jh.log_id ASC
+            """, [employer_email])
+            
+            history_data = cursor.fetchall()
+            
+            # Convert to list of dictionaries for template
+            work_logs = []
+            for index, row in enumerate(history_data, 1):
+                student_name = f"{row[7]} {row[8]}" if row[7] and row[8] else "Unknown Student"
+                
+                log_dict = {
+                    'sl_no': index,
+                    'student_name': student_name,
+                    'join_date': row[4],
+                    'leaving_date': row[5],
+                    'total_salary': f"₹{row[6]}" if row[6] else "₹0"
+                }
+                work_logs.append(log_dict)
+    
+        return render(request, "employer/view_log.html", {
+            "work_logs": work_logs
+        })
+        
+    except Exception as e:
+        messages.error(request, f"Error loading work log: {str(e)}")
+        return redirect("employer_home")
+
+def view_rating(request):
+    """
+    View to display ratings and reviews for the logged-in employer
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    employer_email = request.session.get("username")
+    
+    try:
+        with connection.cursor() as cursor:
+            # Get all ratings for this employer with student names
+            cursor.execute("""
+                SELECT r.rating_id, r.student_id, r.employer_id, r.contract_id,
+                       r.star, r.description, r.date_time,
+                       s.f_name, s.l_name
+                FROM rating r
+                LEFT JOIN student s ON r.student_id = s.email_id
+                WHERE r.employer_id = %s
+                ORDER BY r.date_time DESC
+            """, [employer_email])
+            
+            ratings_data = cursor.fetchall()
+            
+            # Calculate statistics
+            total_reviews = len(ratings_data)
+            if total_reviews == 0:
+                context = {
+                    'total_reviews': 0,
+                    'average_rating': 0,
+                    'customer_satisfaction': 0,
+                    'this_month_reviews': 0,
+                    'positive_reviews': 0,
+                    'neutral_reviews': 0,
+                    'negative_reviews': 0,
+                    'rating_distribution': {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+                    'recent_reviews': []
+                }
+                return render(request, "employer/view_rating.html", context)
+            
+            # Calculate rating statistics
+            total_stars = sum(row[4] for row in ratings_data)
+            average_rating = round(total_stars / total_reviews, 1)
+            
+            # Count ratings by star level
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+            for row in ratings_data:
+                rating_counts[row[4]] += 1
+            
+            # Calculate percentages for rating distribution
+            rating_distribution = {}
+            for star in range(1, 6):
+                percentage = (rating_counts[star] / total_reviews) * 100 if total_reviews > 0 else 0
+                rating_distribution[star] = {
+                    'count': rating_counts[star],
+                    'percentage': round(percentage, 1)
+                }
+            
+            # Count positive (4-5), neutral (3), negative (1-2) reviews
+            positive_reviews = rating_counts[4] + rating_counts[5]
+            neutral_reviews = rating_counts[3]
+            negative_reviews = rating_counts[1] + rating_counts[2]
+            
+            # Calculate customer satisfaction percentage (4-5 star reviews)
+            customer_satisfaction = round((positive_reviews / total_reviews) * 100, 1) if total_reviews > 0 else 0
+            
+            # Count this month's reviews
+            from datetime import datetime, timedelta
+            current_date = datetime.now()
+            first_day_of_month = current_date.replace(day=1)
+            
+            this_month_count = 0
+            for row in ratings_data:
+                if row[6] and row[6] >= first_day_of_month:
+                    this_month_count += 1
+            
+            # Prepare recent reviews for display
+            recent_reviews = []
+            for row in ratings_data[:10]:  # Show last 10 reviews
+                student_name = f"{row[7]} {row[8]}" if row[7] and row[8] else "Anonymous Student"
+                
+                review_dict = {
+                    'rating_id': row[0],
+                    'student_name': student_name,
+                    'contract_id': row[3],
+                    'star_rating': row[4],
+                    'description': row[5],
+                    'date_time': row[6],
+                    'stars_display': '★' * row[4] + '☆' * (5 - row[4])  # Visual stars
+                }
+                recent_reviews.append(review_dict)
+            
+            context = {
+                'total_reviews': total_reviews,
+                'average_rating': average_rating,
+                'customer_satisfaction': customer_satisfaction,
+                'this_month_reviews': this_month_count,
+                'positive_reviews': positive_reviews,
+                'neutral_reviews': neutral_reviews,
+                'negative_reviews': negative_reviews,
+                'rating_distribution': rating_distribution,
+                'recent_reviews': recent_reviews
+            }
+        
+        return render(request, "employer/view_rating.html", context)
+        
+    except Exception as e:
+        messages.error(request, f"Error loading ratings: {str(e)}")
+        return redirect("employer_home")

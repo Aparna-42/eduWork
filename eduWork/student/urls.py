@@ -11,7 +11,7 @@ urlpatterns = [
     path("apply_job/", views.apply_job, name="apply_job"),
     path("view_contract/", views.view_contract, name="student_contract"),
     path("student_history/", views.student_history, name="student_history"),
-
+    path("rate_workspace/", views.rate_workspace, name="rate_workspace"),
 ]
 
 

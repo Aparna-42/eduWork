@@ -1,6 +1,8 @@
+
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth import authenticate, login
 
+from django.utils import timezone
 
 from django.shortcuts import render, redirect
 from django.contrib import messages
@@ -389,3 +391,68 @@ def student_history(request):
                 'experience_months': 0
             }
         })
+def rate_workspace(request):
+    """
+    View to handle workspace rating functionality
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    logged_in_email = request.session.get("username")
+    
+    # Get contract_id and employer_id from URL parameters if provided
+    contract_id = request.GET.get('contract_id')
+    employer_id = request.GET.get('employer_id')
+    
+    if request.method == "POST":
+        # Get form data
+        rating = request.POST.get("rating")
+        description = request.POST.get("description", "")
+        contract_id = request.POST.get("contract_id", "")
+        employer_id = request.POST.get("employer_id", "")
+        
+        # Validate rating
+        if not rating or not rating.isdigit() or int(rating) < 1 or int(rating) > 5:
+            messages.error(request, "Please select a valid rating (1-5 stars).")
+            return render(request, "student/rating.html", {
+                'contract_id': contract_id,
+                'employer_id': employer_id
+            })
+        
+        try:
+            # Get student information
+            student = Student.objects.get(email_id=logged_in_email)
+            student_full_name = f"{student.f_name} {student.l_name}"
+            
+            # Insert rating into database
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO rating (student_id, employer_id, contract_id, star, description, date_time)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, [
+                    logged_in_email,
+                    employer_id,
+                    contract_id,
+                    int(rating),
+                    description,
+                    timezone.now()
+                ])
+            
+            messages.success(request, "Thank you! Your rating has been submitted successfully.")
+            return redirect("student_history")
+            
+        except Student.DoesNotExist:
+            messages.error(request, "Student profile not found.")
+            return redirect("student_registration")
+        except Exception as e:
+            messages.error(request, f"Error submitting rating: {str(e)}")
+            return render(request, "student/rating.html", {
+                'contract_id': contract_id,
+                'employer_id': employer_id
+            })
+    
+    # GET request - show rating form
+    return render(request, "student/rating.html", {
+        'contract_id': contract_id,
+        'employer_id': employer_id
+    })
