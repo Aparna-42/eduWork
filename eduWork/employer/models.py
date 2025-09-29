@@ -1,6 +1,5 @@
 from django.db import models
-from student.models import Jobs
-
+from student.models import Jobs,Message
 class Employer(models.Model):
     employer_id=models.AutoField(primary_key=True)
     o_name=models.CharField(max_length=45)

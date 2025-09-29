@@ -256,9 +256,9 @@ def accept_application(request):
             return redirect("view_applications")
         
         with connection.cursor() as cursor:
-            # Get job details (salary + shop_name)
+            # Get job details (salary, shop_name, and current vacancy)
             cursor.execute("""
-                SELECT salary, shop_name 
+                SELECT salary, shop_name, vacancy
                 FROM job_post 
                 WHERE job_post_id = %s
             """, [job_id])
@@ -268,7 +268,13 @@ def accept_application(request):
                 messages.error(request, "Job not found.")
                 return redirect("view_applications")
             
-            salary, shop_name = job_data
+            salary, shop_name, current_vacancy = job_data
+            
+            # Check if there are still vacancies available
+            if current_vacancy <= 0:
+                messages.error(request, "No vacancies left for this position.")
+                return redirect("view_applications")
+            
             employer_email = request.session.get("username")
             
             # Get student name
@@ -304,7 +310,14 @@ def accept_application(request):
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, [job_id, student_email, employer_email, "active", salary, student_name, shop_name])
             
-            messages.success(request, f"Application accepted successfully!")
+            # Decrement vacancy count when application is accepted
+            cursor.execute("""
+                UPDATE job_post 
+                SET vacancy = vacancy - 1 
+                WHERE job_post_id = %s
+            """, [job_id])
+            
+            messages.success(request, f"Application accepted successfully! Vacancy updated: {current_vacancy - 1} remaining.")
     
     return redirect("view_applications")
 
@@ -688,3 +701,76 @@ def view_rating(request):
     except Exception as e:
         messages.error(request, f"Error loading ratings: {str(e)}")
         return redirect("employer_home")
+    
+from django.db.models import Q
+from django.db import connection
+from django.utils import timezone
+from django.contrib import messages
+from .models import Message
+
+def employer_chat(request, student_email):
+    """
+    Display chat between employer and student
+    """
+    if "username" not in request.session:  # Changed from "email"
+        return redirect("employer_login")
+    
+    logged_in_email = request.session.get("username")  # Changed from "email"
+    
+    # Fetch ALL messages between this employer and student
+    chat_messages = Message.objects.filter(
+        Q(sender_id=logged_in_email, receiver_id=student_email) |
+        Q(sender_id=student_email, receiver_id=logged_in_email)
+    ).order_by('timestamp')
+    
+    # Get student name from student table
+    student_name = student_email.split('@')[0].title()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT f_name, l_name FROM student WHERE email_id = %s",
+                [student_email]
+            )
+            student_data = cursor.fetchone()
+            if student_data:
+                student_name = f"{student_data[0]} {student_data[1]}"
+    except:
+        pass
+    
+    context = {
+        'messages': chat_messages,
+        'current_user_id': logged_in_email,
+        'student_id': student_email,
+        'student_name': student_name,
+    }
+    
+    return render(request, 'employer/chat.html', context)
+
+
+def employer_send_message(request):
+    """
+    Handle sending messages from employer
+    """
+    if "username" not in request.session:  # Changed from "email"
+        return redirect("employer_login")
+    
+    if request.method == 'POST':
+        sender_id = request.POST.get('sender_id')
+        receiver_id = request.POST.get('receiver_id')
+        message_text = request.POST.get('message_text')
+        
+        if sender_id and receiver_id and message_text:
+            try:
+                Message.objects.create(
+                    sender_id=sender_id,
+                    receiver_id=receiver_id,
+                    message_text=message_text.strip(),
+                    timestamp=timezone.now()
+                )
+                messages.success(request, 'Message sent!')
+            except Exception as e:
+                messages.error(request, f'Failed to send: {str(e)}')
+        
+        return redirect('employer_chat', student_email=receiver_id)
+    
+    return redirect('employer_home')
