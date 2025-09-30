@@ -161,11 +161,20 @@ def apply_job(request):
 
         return redirect("apply_job")  # reload page after applying
 
-    # GET request - show filtered jobs based on student skills
+    # GET request - show filtered jobs based on student skills and academic schedule
     try:
         # Get current student's skills
         student = Student.objects.get(email_id=logged_in_email)
         student_skills = [skill.strip().lower() for skill in student.skill.split(',')]
+        
+        # Get student's academic schedule (busy dates)
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT start_date, end_date 
+                FROM academic 
+                WHERE student_id = %s
+            """, [logged_in_email])
+            busy_periods = cursor.fetchall()
         
         # Raw SQL query to get jobs from employers whose category matches student skills
         with connection.cursor() as cursor:
@@ -194,35 +203,59 @@ def apply_job(request):
             cursor.execute(query, params)
             job_data = cursor.fetchall()
             
-            # Convert to list of dictionaries for easier template usage
+            # Convert to list of dictionaries and filter by schedule
             filtered_jobs = []
             for row in job_data:
+                job_start_date = row[8]
+                job_end_date = row[9]
+                
                 # Check if current student has already applied
                 student_emails = row[10].split(',') if row[10] else []
                 student_emails = [email.strip() for email in student_emails]
                 has_applied = logged_in_email in student_emails
                 
-                job_dict = {
-                    'job_post_id': row[0],
-                    'post_title': row[1],
-                    'post_description': row[2],
-                    'post_date': row[3],
-                    'shop_name': row[4],
-                    'phone_no': row[5],
-                    'vacancy': row[6],
-                    'map_loc': row[7],
-                    'start_date': row[8],
-                    'end_date': row[9],
-                    'student_id': row[10],
-                    'salary': row[11],
-                    'employer_id': row[12],
-                    'has_applied': has_applied  # New field to track if student already applied
-                }
-                filtered_jobs.append(job_dict)
+                # Check if job overlaps with any busy period
+                is_available = True
+                if job_start_date and job_end_date:
+                    for busy_start, busy_end in busy_periods:
+                        if busy_start and busy_end:
+                            # Check for date overlap
+                            # Two date ranges overlap if:
+                            # start1 <= end2 AND start2 <= end1
+                            if job_start_date <= busy_end and busy_start <= job_end_date:
+                                is_available = False
+                                break
+                
+                # Only include jobs that don't overlap with busy periods
+                if is_available:
+                    job_dict = {
+                        'job_post_id': row[0],
+                        'post_title': row[1],
+                        'post_description': row[2],
+                        'post_date': row[3],
+                        'shop_name': row[4],
+                        'phone_no': row[5],
+                        'vacancy': row[6],
+                        'map_loc': row[7],
+                        'start_date': row[8],
+                        'end_date': row[9],
+                        'student_id': row[10],
+                        'salary': row[11],
+                        'employer_id': row[12],
+                        'has_applied': has_applied
+                    }
+                    filtered_jobs.append(job_dict)
+        
+        # Provide feedback about filtering
+        if busy_periods:
+            if filtered_jobs:
+                messages.info(request, f"Showing jobs that fit your study schedule. {len(busy_periods)} busy period(s) considered.")
+            else:
+                messages.warning(request, "No jobs found that match your skills and study schedule. Try adjusting your schedule or check back later.")
         
         return render(request, "student/apply_job.html", {
             "job_post": filtered_jobs,
-            "student_skills": student.skill,  # for debugging/display purposes
+            "student_skills": student.skill,
         })
         
     except Student.DoesNotExist:
@@ -230,17 +263,74 @@ def apply_job(request):
         return redirect("student_registration")
     except Exception as e:
         # Fallback to show all jobs if there's an error
-        messages.warning(request, "Unable to filter jobs by skills. Showing all available jobs.")
-        job_post = Jobs.objects.filter(vacancy__gt=0)
+        messages.warning(request, f"Unable to filter jobs by schedule. Error: {str(e)}")
         
-        # Add has_applied field for fallback jobs too
-        for job in job_post:
-            student_emails = job.student_id.split(',') if job.student_id else []
-            student_emails = [email.strip() for email in student_emails]
-            job.has_applied = logged_in_email in student_emails
-        
-        return render(request, "student/apply_job.html", {"job_post": job_post})
-
+        # Still try to filter by skills and check application status
+        try:
+            student = Student.objects.get(email_id=logged_in_email)
+            student_skills = [skill.strip().lower() for skill in student.skill.split(',')]
+            
+            with connection.cursor() as cursor:
+                skill_conditions = []
+                params = []
+                
+                for skill in student_skills:
+                    skill_conditions.append("LOWER(e.category) LIKE %s")
+                    params.append(f"%{skill}%")
+                
+                where_clause = " OR ".join(skill_conditions)
+                
+                query = f"""
+                    SELECT DISTINCT jp.job_post_id, jp.post_title, jp.post_description, 
+                           jp.post_date, jp.shop_name, jp.phone_no, jp.vacancy, 
+                           jp.map_loc, jp.start_date, jp.end_date, jp.student_id, jp.salary,
+                           jp.employer_id
+                    FROM job_post jp
+                    INNER JOIN employer e ON jp.employer_id = e.employer_id
+                    WHERE ({where_clause}) AND jp.vacancy > 0
+                    ORDER BY jp.post_date DESC
+                """
+                
+                cursor.execute(query, params)
+                job_data = cursor.fetchall()
+                
+                filtered_jobs = []
+                for row in job_data:
+                    student_emails = row[10].split(',') if row[10] else []
+                    student_emails = [email.strip() for email in student_emails]
+                    has_applied = logged_in_email in student_emails
+                    
+                    job_dict = {
+                        'job_post_id': row[0],
+                        'post_title': row[1],
+                        'post_description': row[2],
+                        'post_date': row[3],
+                        'shop_name': row[4],
+                        'phone_no': row[5],
+                        'vacancy': row[6],
+                        'map_loc': row[7],
+                        'start_date': row[8],
+                        'end_date': row[9],
+                        'student_id': row[10],
+                        'salary': row[11],
+                        'employer_id': row[12],
+                        'has_applied': has_applied
+                    }
+                    filtered_jobs.append(job_dict)
+                
+                return render(request, "student/apply_job.html", {
+                    "job_post": filtered_jobs,
+                    "student_skills": student.skill,
+                })
+        except:
+            job_post = Jobs.objects.filter(vacancy__gt=0)
+            
+            for job in job_post:
+                student_emails = job.student_id.split(',') if job.student_id else []
+                student_emails = [email.strip() for email in student_emails]
+                job.has_applied = logged_in_email in student_emails
+            
+            return render(request, "student/apply_job.html", {"job_post": job_post})
 
 def view_contract(request):
     """
