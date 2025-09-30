@@ -774,3 +774,41 @@ def employer_send_message(request):
         return redirect('employer_chat', student_email=receiver_id)
     
     return redirect('employer_home')
+
+from .models import Feedback
+from datetime import datetime
+
+def post_feedback(request):
+    """
+    View to handle employer feedback submission
+    """
+    if "username" not in request.session:
+        return redirect("employer_login")
+    
+    logged_in_email = request.session.get("username")
+    
+    if request.method == "POST":
+        feedback_text = request.POST.get("feedback")
+        
+        if feedback_text and feedback_text.strip():
+            try:
+                # Create new feedback entry
+                current_date = datetime.now().date()
+                current_time = datetime.now().time()
+                
+                Feedback.objects.create(
+                    feedback=feedback_text.strip(),
+                    date=current_date,
+                    time=current_time,
+                    u_id=logged_in_email
+                )
+                
+                messages.success(request, "Thank you for your feedback! It helps us improve EduWork.")
+                return redirect("employer_post_feedback")
+                
+            except Exception as e:
+                messages.error(request, f"Error submitting feedback: {str(e)}")
+        else:
+            messages.error(request, "Please enter your feedback before submitting.")
+    
+    return render(request, "employer/post_feedback.html")

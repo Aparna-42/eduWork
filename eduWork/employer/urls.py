@@ -19,4 +19,5 @@ urlpatterns = [
     path("view_rating/", views.view_rating, name="view_rating"),
     path('chat/<str:student_email>/', views.employer_chat, name='employer_chat'),
     path('send-message/', views.employer_send_message, name='employer_send_message'),
+    path('post_feedback/', views.post_feedback, name='employer_post_feedback'),
 ]

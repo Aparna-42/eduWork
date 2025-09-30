@@ -74,6 +74,32 @@ class Message(models.Model):
     def __str__(self):
         return f"Message from {self.sender_id} to {self.receiver_id}"
 
-
-
     
+
+class Academic(models.Model):
+    academic_id = models.AutoField(primary_key=True)
+    student_id = models.CharField(max_length=45)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    description = models.CharField(max_length=400)
+    
+    class Meta:
+        db_table = 'academic'
+        ordering = ['-start_date']
+    
+    def __str__(self):
+        return f"Schedule for {self.student_id}: {self.start_date} to {self.end_date}"
+
+class Feedback(models.Model):
+    feedback_id = models.AutoField(primary_key=True)
+    feedback = models.CharField(max_length=500)
+    date = models.DateField()
+    time = models.TimeField()
+    u_id = models.CharField(max_length=45)  # User email (student/employer)
+    
+    class Meta:
+        db_table = 'feedback'
+        ordering = ['-date', '-time']
+    
+    def __str__(self):
+        return f"Feedback from {self.u_id} on {self.date}"

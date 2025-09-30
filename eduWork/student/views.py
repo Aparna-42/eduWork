@@ -546,4 +546,127 @@ def send_message(request):
         
         return redirect('student_chat', employer_email=receiver_id)
     
+
     return redirect('student_home')
+
+from .models import Academic
+
+def schedule_studies(request):
+    """
+    View to manage student academic schedules
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    logged_in_email = request.session.get("username")
+    
+    if request.method == "POST":
+        start_date = request.POST.get("start_date")
+        end_date = request.POST.get("end_date")
+        description = request.POST.get("description")
+        
+        if start_date and end_date and description:
+            try:
+                # Validate that end_date is after start_date
+                from datetime import datetime
+                start = datetime.strptime(start_date, "%Y-%m-%d").date()
+                end = datetime.strptime(end_date, "%Y-%m-%d").date()
+                
+                if end < start:
+                    messages.error(request, "End date must be after start date.")
+                    return redirect("schedule_studies")
+                
+                # Create new schedule
+                Academic.objects.create(
+                    student_id=logged_in_email,
+                    start_date=start_date,
+                    end_date=end_date,
+                    description=description.strip()
+                )
+                
+                messages.success(request, "Schedule added successfully!")
+                return redirect("schedule_studies")
+                
+            except ValueError:
+                messages.error(request, "Invalid date format.")
+            except Exception as e:
+                messages.error(request, f"Error adding schedule: {str(e)}")
+        else:
+            messages.error(request, "All fields are required.")
+    
+    # GET request - show all schedules for this student
+    try:
+        schedules = Academic.objects.filter(student_id=logged_in_email).order_by('-start_date')
+        
+        return render(request, "student/schedule_studies.html", {
+            "schedules": schedules
+        })
+        
+    except Exception as e:
+        messages.error(request, f"Error loading schedules: {str(e)}")
+        return render(request, "student/schedule_studies.html", {"schedules": []})
+
+
+def delete_schedule(request, academic_id):
+    """
+    Delete a schedule entry
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    logged_in_email = request.session.get("username")
+    
+    if request.method == "POST":
+        try:
+            # Verify the schedule belongs to the logged-in student
+            schedule = Academic.objects.get(
+                academic_id=academic_id,
+                student_id=logged_in_email
+            )
+            schedule.delete()
+            messages.success(request, "Schedule deleted successfully!")
+            
+        except Academic.DoesNotExist:
+            messages.error(request, "Schedule not found or you don't have permission to delete it.")
+        except Exception as e:
+            messages.error(request, f"Error deleting schedule: {str(e)}")
+    
+    return redirect("schedule_studies")
+
+from .models import Feedback
+from datetime import datetime
+
+def post_feedback(request):
+    """
+    View to handle student feedback submission
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    logged_in_email = request.session.get("username")
+    
+    if request.method == "POST":
+        feedback_text = request.POST.get("feedback")
+        
+        if feedback_text and feedback_text.strip():
+            try:
+                # Create new feedback entry
+                current_date = datetime.now().date()
+                current_time = datetime.now().time()
+                
+                Feedback.objects.create(
+                    feedback=feedback_text.strip(),
+                    date=current_date,
+                    time=current_time,
+                    u_id=logged_in_email
+                )
+                
+                messages.success(request, "Thank you for your feedback! It helps us improve EduWork.")
+                return redirect("post_feedback")
+                
+            except Exception as e:
+                messages.error(request, f"Error submitting feedback: {str(e)}")
+        else:
+            messages.error(request, "Please enter your feedback before submitting.")
+    
+    return render(request, "student/post_feedback.html")
