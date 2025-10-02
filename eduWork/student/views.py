@@ -86,6 +86,78 @@ def student_profile(request):
         student = None
     return render(request, 'student/student_profile.html', {'student': student})
 
+def update_student(request):
+    """
+    View to update student profile - all fields are optional
+    """
+    if "username" not in request.session:
+        return redirect("login")
+    
+    logged_in_email = request.session.get("username")
+    
+    try:
+        student = Student.objects.get(email_id=logged_in_email)
+    except Student.DoesNotExist:
+        messages.error(request, "Student profile not found.")
+        return redirect("student_registration")
+    
+    if request.method == "POST":
+        # Handle skills (checkboxes → comma separated string)
+        skills = request.POST.getlist("skills")
+        if skills:
+            skills_str = ", ".join(skills)
+            student.skill = skills_str
+        
+        # Handle profile picture
+        profile_pic = request.FILES.get("profilePicture")
+        if profile_pic:
+            student.photo = profile_pic
+        
+        # Update phone number if provided
+        phone_no = request.POST.get("phone")
+        if phone_no and phone_no.strip():
+            student.phone_no = phone_no.strip()
+        
+        # Handle password update
+        password = request.POST.get("password")
+        confirm_password = request.POST.get("confirmPassword")
+        
+        password_updated = False
+        if password and password.strip():
+            # Validate passwords match
+            if password != confirm_password:
+                messages.error(request, "Passwords do not match!")
+                return render(request, "student/profile_update.html", {'student': student})
+            
+            # Update password in login table
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE login SET password = %s WHERE username = %s",
+                        [password, logged_in_email]
+                    )
+                password_updated = True
+            except Exception as e:
+                messages.error(request, f"Error updating password: {str(e)}")
+                return render(request, "student/profile_update.html", {'student': student})
+        
+        # Save student record with updated fields
+        try:
+            student.save()
+            
+            if password_updated:
+                messages.success(request, "Profile and password updated successfully!")
+            else:
+                messages.success(request, "Profile updated successfully!")
+            
+            return redirect("student_profile")
+            
+        except Exception as e:
+            messages.error(request, f"Error updating profile: {str(e)}")
+            return render(request, "student/profile_update.html", {'student': student})
+    
+    # GET request - show update form with current values
+    return render(request, "student/profile_update.html", {'student': student})
 
 def login_view(request):
     if request.method == "POST":
